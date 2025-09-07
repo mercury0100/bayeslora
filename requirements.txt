@@ -1,9 +1,5 @@
-torch>=2.0.0
-transformers>=4.35.0
-peft>=0.5.0
-datasets>=2.15.0
-# (optional: for training loops)
-# accelerate>=0.20.0
-# transformers[sentencepiece] if you need other tokenizers
-
-git+https://github.com/huggingface/peft.git
+torch>=2.1
+transformers>=4.39
+peft>=0.10
+accelerate>=0.30
+datasets>=2.20
