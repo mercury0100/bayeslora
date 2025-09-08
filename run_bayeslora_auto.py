@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-# lora_svd_vs_lora_mirror_fixed.py
-# Vanilla LoRA vs Variational LoRA (Sparse Variational Dropout / ARD)
+# lora_svd_vs_lora_mirror_prune_ongo.py
+# Variational LoRA (ARD) with prune-as-you-go + Vanilla LoRA baseline
 # - Correct MC sampling at eval
-# - ELBO minibatch scaling per-sample (1/N)
+# - ELBO per-sample scaling (1/N)
 # - LoRA scaling updated after rank pruning
+# - Prune-as-you-go with safe floors and optimizer rebuild
 # - Optional determinism & grad clipping
 # - Log-α percentile diagnostics
 
@@ -29,7 +30,7 @@ def kl_from_mu_logs2(mu: torch.Tensor, log_sigma2: torch.Tensor) -> torch.Tensor
     neg_kl = _K1 * torch.sigmoid(_K2 + _K3 * log_alpha) - 0.5 * torch.log1p(1.0 / (alpha + _EPS)) - _K1
     return -neg_kl  # positive KL, same shape as mu
 
-# ---------- Minimal base Linear (avoid double-registration of base weights) ----------
+# ---------- Minimal base Linear ----------
 class _BaseLinear(nn.Module):
     def __init__(self, d_in, d_out):
         super().__init__()
@@ -54,7 +55,7 @@ class LoRALinear(nn.Module):
         self.A = nn.Parameter(torch.zeros(r, d_in))
         self.B = nn.Parameter(torch.zeros(d_out, r))
         nn.init.kaiming_uniform_(self.A, a=math.sqrt(5))
-        nn.init.uniform_(self.B, a=-1e-3, b=1e-3)  # tiny but non-zero
+        nn.init.uniform_(self.B, a=-1e-3, b=1e-3)
     def forward(self, x):
         y = self.base(x)
         delta = (x @ self.A.t()) @ self.B.t()
@@ -66,7 +67,7 @@ class VariationalLoRALinear(nn.Module):
     LoRA with Sparse Variational Dropout (ARD).
     Supports:
       - additive reparam (sampling A, B)
-      - local reparam (sampling adapter output Δy) via --local-reparam
+      - local reparam (sampling adapter output Δy)
     """
     def __init__(self, d_in, d_out, r: int, lora_alpha: float = 1.0,
                  tie_alpha_per_rank: bool = True, init_log_sigma2: float = -12.0,
@@ -100,38 +101,30 @@ class VariationalLoRALinear(nn.Module):
 
     def forward(self, x, sample: bool = True):
         """
-        If local_reparam:
-            sample Δy in activation space with diag variance approximation.
-        Else:
-            sample A,B directly (additive reparam).
-        Note: 'sample' controls stochasticity regardless of train/eval mode.
+        'sample' controls stochasticity regardless of train/eval mode.
         """
         y = self.base(x)
-
         A_log_s2, B_log_s2 = self._log_sigma2_A(), self._log_sigma2_B()
-        # Clamp variance logs a bit for numerical sanity
+        # conservative clamps
         A_log_s2 = torch.clamp(A_log_s2, min=-20.0, max=2.0)
         B_log_s2 = torch.clamp(B_log_s2, min=-20.0, max=2.0)
 
         if not sample:
-            # Deterministic mean prediction
             delta = (x @ self.A_mu.t()) @ self.B_mu.t()
             return y + self.scaling * delta
 
         if self.local_reparam:
-            # Local reparameterization (diag var approximation)
             x2 = x.pow(2)
-            A_var = A_log_s2.exp()  # [r, d_in]
-            m_s = x @ self.A_mu.t()                        # [B, r]
-            v_s = x2 @ A_var.t()                           # [B, r]
+            A_var = A_log_s2.exp()                # [r, d_in]
+            m_s = x @ self.A_mu.t()               # [B, r]
+            v_s = x2 @ A_var.t()                  # [B, r]
 
-            B_var = B_log_s2.exp()                         # [d_out, r]
-            m_y = m_s @ self.B_mu.t()                      # [B, d_out]
-            v_y = (v_s @ (self.B_mu.pow(2)).t()) + ((m_s.pow(2)) @ B_var.t())  # [B, d_out]
+            B_var = B_log_s2.exp()                # [d_out, r]
+            m_y = m_s @ self.B_mu.t()             # [B, d_out]
+            v_y = (v_s @ (self.B_mu.pow(2)).t()) + ((m_s.pow(2)) @ B_var.t())
             eps = torch.randn_like(m_y)
             delta = m_y + eps * torch.sqrt(v_y + 1e-8)
         else:
-            # Additive reparam: sample A and B directly
             A = self.A_mu + torch.exp(0.5 * A_log_s2) * torch.randn_like(self.A_mu)
             B = self.B_mu + torch.exp(0.5 * B_log_s2) * torch.randn_like(self.B_mu)
             delta = (x @ A.t()) @ B.t()
@@ -139,7 +132,6 @@ class VariationalLoRALinear(nn.Module):
         return y + self.scaling * delta
 
     def kl(self) -> torch.Tensor:
-        """Raw sum of per-weight KL (faithful to paper/ports)."""
         A_log_s2, B_log_s2 = self._log_sigma2_A(), self._log_sigma2_B()
         return kl_from_mu_logs2(self.A_mu, A_log_s2).sum() + kl_from_mu_logs2(self.B_mu, B_log_s2).sum()
 
@@ -154,11 +146,25 @@ class VariationalLoRALinear(nn.Module):
         return 0.5 * (A_med + B_med)
 
     @torch.no_grad()
-    def prune(self, log_alpha_thresh: float = 3.0):
+    def prune(self, log_alpha_thresh: float = 3.0, min_ranks: int = 1):
+        """
+        Prune ranks with logα >= thresh; ensure at least 'min_ranks' remain.
+        """
         la = self.rank_log_alpha()
         keep = torch.nonzero(la < log_alpha_thresh, as_tuple=False).flatten()
+
+        # ensure floor
+        if keep.numel() < min_ranks:
+            # choose the 'min_ranks' smallest logα (most useful) ranks
+            _, idx = torch.topk(-la, k=min_ranks)  # negative for smallest
+            keep = idx
+
+        # if still empty (extreme case), keep the best one
         if keep.numel() == 0:
             keep = torch.tensor([torch.argmin(la)], device=la.device)
+
+        keep = keep.sort().values  # stable ordering
+
         self.A_mu = nn.Parameter(self.A_mu[keep])
         self.B_mu = nn.Parameter(self.B_mu[:, keep])
         if self.tie_alpha_per_rank:
@@ -166,8 +172,8 @@ class VariationalLoRALinear(nn.Module):
         else:
             self.A_log_sigma2 = nn.Parameter(self.A_log_sigma2[keep])
             self.B_log_sigma2 = nn.Parameter(self.B_log_sigma2[:, keep])
+
         self.r = keep.numel()
-        # Update LoRA scaling after rank change
         self.scaling = self.lora_alpha / self.r
 
     @torch.no_grad()
@@ -221,9 +227,10 @@ class TinyMLP(nn.Module):
         return {"layer1": self.l1.sparsity_report(thresh), "layer2": self.l2.sparsity_report(thresh)}
 
     @torch.no_grad()
-    def prune(self, thresh=3.0):
+    def prune(self, thresh=3.0, min_ranks=1):
         if self.mode != "vlora": return
-        self.l1.prune(thresh); self.l2.prune(thresh)
+        self.l1.prune(thresh, min_ranks=min_ranks)
+        self.l2.prune(thresh, min_ranks=min_ranks)
 
 # ---------- Data ----------
 @dataclass
@@ -246,6 +253,10 @@ class TrainConfig:
     local_reparam: bool = False
     deterministic: bool = False
     clip_grad: Optional[float] = None
+    # prune-as-you-go
+    prune_every: int = 0           # 0 = disabled
+    prune_start_epoch: Optional[int] = None
+    min_ranks_per_layer: int = 1
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 def make_spiral(n, noise=0.2, turns=1.5):
@@ -280,6 +291,11 @@ def accuracy(model, loader, device, sample=False):
             total += yb.numel()
     return correct / total
 
+def make_optimizer(model: nn.Module, cfg: TrainConfig):
+    """(Re)build an AdamW optimizer for current model params."""
+    return torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
+                             lr=cfg.lr, weight_decay=0.0)
+
 # ---------- Train once ----------
 def train_once(mode: str, cfg: TrainConfig, train_loader, val_loader, tag: str):
     device = torch.device(cfg.device)
@@ -290,12 +306,17 @@ def train_once(mode: str, cfg: TrainConfig, train_loader, val_loader, tag: str):
         local_reparam=cfg.local_reparam
     ).to(device)
 
-    # AdamW with NO weight decay on variational params (mirrors paper practice)
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
-                            lr=cfg.lr, weight_decay=0.0)
+    opt = make_optimizer(model, cfg)
 
-    B = len(train_loader)                # # of minibatches
-    N = len(train_loader.dataset)        # train size (for per-sample scaling)
+    B = len(train_loader)                # # minibatches
+    N = len(train_loader.dataset)        # train size (per-sample KL scaling)
+
+    # prune schedule defaults
+    prune_every = max(0, int(cfg.prune_every))
+    if cfg.prune_start_epoch is None:
+        prune_start_epoch = cfg.kl_freeze_epochs + cfg.beta_warmup_epochs
+    else:
+        prune_start_epoch = cfg.prune_start_epoch
 
     print(f"\n=== Training {tag} ({mode.upper()}) on {device} ===")
     for epoch in range(1, cfg.epochs + 1):
@@ -320,7 +341,7 @@ def train_once(mode: str, cfg: TrainConfig, train_loader, val_loader, tag: str):
             logits = model(xb, sample=do_sample)
             ce = F.cross_entropy(logits, yb, reduction="mean")
             if mode == "vlora":
-                # Faithful ELBO per-sample scaling: loss = CE + β * reg * (KL_sum / N)
+                # ELBO per-sample scaling
                 kl_sum = model.kl()
                 kl_term = cfg.kl_scale * (kl_sum / N)
                 loss = ce + beta * kl_term
@@ -337,11 +358,12 @@ def train_once(mode: str, cfg: TrainConfig, train_loader, val_loader, tag: str):
             tot_loss += float(loss.item())
             tot_ce += float(ce.item())
 
+        # Validation (mean prediction)
         val_acc = accuracy(model, val_loader, device, sample=False)
 
+        # Diagnostics / sparsity report
         if mode == "vlora":
             sp = model.sparsity(thresh=cfg.logalpha_thresh)
-            # Log-α percentiles for diagnostics
             with torch.no_grad():
                 la1 = model.l1.rank_log_alpha().detach().cpu()
                 la2 = model.l2.rank_log_alpha().detach().cpu()
@@ -357,19 +379,32 @@ def train_once(mode: str, cfg: TrainConfig, train_loader, val_loader, tag: str):
         else:
             print(f"Epoch {epoch:02d} | loss {tot_loss/B:.4f} | ce {tot_ce/B:.4f} | val_acc {val_acc*100:.2f}%")
 
-    # Eval & prune (VLORA) or just eval (LoRA)
+        # ---- Prune-as-you-go (after warm-up) ----
+        if mode == "vlora" and prune_every > 0 and epoch >= prune_start_epoch and (epoch % prune_every == 0):
+            print(f"\n[Prune] Epoch {epoch}: pruning ranks with logα >= {cfg.logalpha_thresh} "
+                  f"(floor {cfg.min_ranks_per_layer}/layer)")
+            before1, before2 = model.l1.r, model.l2.r
+            model.prune(thresh=cfg.logalpha_thresh, min_ranks=cfg.min_ranks_per_layer)
+            after1, after2 = model.l1.r, model.l2.r
+            print(f"[Prune] L1: {before1} -> {after1} ranks | L2: {before2} -> {after2} ranks")
+            # Rebuild optimizer since Parameter objects changed
+            opt = make_optimizer(model, cfg)
+            print("[Prune] Optimizer rebuilt for new parameter tensors.\n")
+
+    # Final eval & end-of-training prune report
     if mode == "vlora":
         acc_mean = accuracy(model, val_loader, device, sample=False)
         acc_mc   = accuracy(model, val_loader, device, sample=True)
         print(f"\n[{tag}] Validation accuracy (mean): {acc_mean*100:.2f}%")
         print(f"[{tag}] Validation accuracy (MC):   {acc_mc*100:.2f}%")
 
-        print("\nPruning ranks with high log alpha…")
-        model.prune(thresh=cfg.logalpha_thresh)
-        sp = model.sparsity(thresh=cfg.logalpha_thresh)
-        print(f"Post-prune ranks: L1={sp['layer1']['ranks']}  L2={sp['layer2']['ranks']}")
+        print("\nPruning ranks with high log alpha (final pass)…")
+        before1, before2 = model.l1.r, model.l2.r
+        model.prune(thresh=cfg.logalpha_thresh, min_ranks=cfg.min_ranks_per_layer)
+        after1, after2 = model.l1.r, model.l2.r
+        print(f"Post-prune ranks: L1={after1} (from {before1})  L2={after2} (from {before2})")
         acc_pruned = accuracy(model, val_loader, device, sample=False)
-        print(f"[{tag}] Validation accuracy after pruning: {acc_pruned*100:.2f}%")
+        print(f"[{tag}] Validation accuracy after final pruning: {acc_pruned*100:.2f}%")
         return {"acc_mean": acc_mean, "acc_mc": acc_mc, "acc_pruned": acc_pruned}
     else:
         acc = accuracy(model, val_loader, device, sample=False)
@@ -396,7 +431,7 @@ def main():
     p.add_argument("--kl-scale", type=float, default=0.05,
                    help="KL multiplier (aka reg_factor). Loss = CE + β * kl_scale * (sum(KL)/N)")
     p.add_argument("--logalpha-thresh", type=float, default=3.0,
-                   help="Paper's pruning cutoff (log alpha > 3 → prune)")
+                   help="Pruning cutoff (log alpha > thresh → prune)")
     p.add_argument("--local-reparam", action="store_true", default=False,
                    help="Use local reparameterization (sample in activation space)")
     p.add_argument("--seed", type=int, default=123)
@@ -404,6 +439,13 @@ def main():
                    help="Enable deterministic algorithms (slower).")
     p.add_argument("--clip-grad", type=float, default=None,
                    help="If set, clip total grad norm to this value.")
+    # prune-as-you-go flags
+    p.add_argument("--prune-every", type=int, default=0,
+                   help="Prune every N epochs after prune-start (0=disabled).")
+    p.add_argument("--prune-start-epoch", type=int, default=None,
+                   help="Epoch to start prune-as-you-go. Default = kl_freeze + beta_warmup.")
+    p.add_argument("--min-ranks-per-layer", type=int, default=1,
+                   help="Minimum ranks to keep per layer when pruning.")
     args = p.parse_args()
 
     cfg = TrainConfig(
@@ -423,6 +465,9 @@ def main():
         seed=args.seed,
         deterministic=args.deterministic,
         clip_grad=args.clip_grad,
+        prune_every=args.prune_every,
+        prune_start_epoch=args.prune_start_epoch,
+        min_ranks_per_layer=max(1, args.min_ranks_per_layer),
     )
 
     # Seeding / determinism
