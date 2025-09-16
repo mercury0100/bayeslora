@@ -1,41 +1,20 @@
 # BayesLoRA
 
-## Quick variational dropout demo
+## Resnet
 
+### BayesLoRA with pruning + logging + ckpts
 ```
-python run_bayeslora.py \
-  --freeze-base \
-  --rank 168 --lora-alpha 256 \
-  --local-reparam \
-  --epochs 50 \
-  --kl-freeze-epochs 25 \
-  --beta-warmup-epochs 10 \
-  --sample-warmup-epochs 15 \
-  --kl-scale 0.05 \
-  --logalpha-thresh 3 \
-  --lr 5e-4
+python bayeslora_resnet.py --method bayeslora --dataset cifar10 --epochs 40 --rank 8 \
+  --kl-scale 0.1 --kl-freeze-epochs 3 --beta-warmup-epochs 7 \
+  --sample-warmup-epochs 3 --prune-every 4 --logalpha-thresh 1.0 --min-ranks 2 \
+  --outdir runs --tag main
 ```
-  
-## Quick BayesLoRA demo:
-
+### LoRA baseline
 ```
-python run_bayeslora_auto.py \
-  --prune-every 5 \
-  --logalpha-thresh 3.0 \
-  --min-ranks-per-layer 2 \
-  --freeze-base \
-  --rank 168 --lora-alpha 256 \
-  --local-reparam \
-  --epochs 100 \
-  --kl-freeze-epochs 25 \
-  --beta-warmup-epochs 10 \
-  --sample-warmup-epochs 15 \
-  --kl-scale 0.05 \
-  --logalpha-thresh 3 \
-  --lr 5e-4
+python bayeslora_resnet.py --method lora --dataset cifar10 --epochs 40 --rank 3 --outdir runs --tag lora3
 ```
 
-## BayesLoRA
+## Full run
 ```
 ⚡ master ~/bayeslora python benchmark_resnet_cifar.py --epochs 20 --rank 128 --prune-every 3 --min-ranks 2 --kl-scale 0.1
 
@@ -94,4 +73,21 @@ Epoch 20 | loss 0.0371 | ce 0.0371 | β 0.00 | sample 0 | acc_mean 94.79% | acc_
 === Summary ===
 BayesLoRA acc (mean): 94.60% | MC: 94.52%
 LoRA     acc (mean): 94.79% | MC: 94.79%
+```
+
+## Hello
+
+```
+python benchmark_llama.py \
+  --method bayeslora \
+  --datasets arc_challenge,hellaswag \
+  --model-id meta-llama/Llama-2-7b-hf \
+  --rank 32 --lora-alpha 32 \
+  --max-steps 3000 --warmup-steps 100 \
+    --kl-scale 0.01
+    --logalpha-thresh 7.0
+    --prune-start-step 1500
+    --prune-every 100
+    --beta-prune-threshold 0.95
+    --min-ranks 12
 ```

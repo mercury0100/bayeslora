@@ -236,6 +236,7 @@ def apply_bayeslora_to_llama(
         d_out, d_in = _module_in_out(lin)
         dev = _device_like(lin)
 
+        # --- AFTER ---
         vl = VariationalLoRAWrapper(
             base=lin,
             d_in=d_in,
@@ -244,7 +245,7 @@ def apply_bayeslora_to_llama(
             lora_alpha=float(lora_alpha),
             tie_alpha_per_rank=tie_alpha_per_rank,
             local_reparam=local_reparam,
-        ).to(device=dev, dtype=torch.float32)
+        ).to(device=dev)  # keep base dtype (bf16/4bit), adapters are FP32 already
 
         vl._kl_scale = float(kl_scale)
 
