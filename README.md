@@ -75,7 +75,21 @@ BayesLoRA acc (mean): 94.60% | MC: 94.52%
 LoRA     acc (mean): 94.79% | MC: 94.79%
 ```
 
-## Hello
+## GPT-2
+
+```
+python bayeslora_nanogpt.py \
+  --method bayeslora \
+  --kl-freeze-steps 200 \
+  --beta-warmup-steps 200 \
+  --kl-scale 1e-5 \
+  --sample-warmup-steps 0 \
+  --rank 32 --lora-alpha 32 \
+  --prune-every 200 --logalpha-thresh 4.0 --min-ranks 2 \
+  --diag-every 100
+```
+
+## LLaMa (not working)
 
 ```
 python benchmark_llama.py \

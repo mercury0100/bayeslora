@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-benchmark_llama.py
+bayeslora_llama.py
 BayesLoRA vs LoRA on multiple-choice tasks (ARC-Challenge, HellaSwag) with Llama-2 7B.
 
 - Base is FROZEN.
@@ -11,7 +11,7 @@ BayesLoRA vs LoRA on multiple-choice tasks (ARC-Challenge, HellaSwag) with Llama
 - ✅ Train-time MC sampling (Molchanov-style) after --sample-warmup-steps.
 
 Example:
-  python benchmark_llama.py \
+  python bayeslora_llama.py \
     --method bayeslora \
     --datasets arc_challenge,hellaswag \
     --model-id meta-llama/Llama-2-7b-hf \
