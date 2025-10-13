@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# bayeslora_nanogpt.py
+# bayeslora_gpt.py
 # WikiText-2 language modeling with LoRA vs BayesLoRA adapters on GPT-2/nanoGPT-ish HF models.
 # - Frozen base
 # - BayesLoRA: KL warmup, optional prune-as-you-go, MC eval (perplexity + token ECE/accuracy)
 # - Tokenize -> concatenate -> fixed-length blocks (nanoGPT style)
 
 '''
-python bayeslora_nanogpt.py \
+python bayeslora_gpt.py \
   --method bayeslora \
   --kl-freeze-steps 200 \
   --beta-warmup-steps 200 \
