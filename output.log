@@ -1,74 +1,53 @@
-Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:01<00:01,  1.55s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:04<00:00,  2.09s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:04<00:00,  2.01s/it]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:01<00:01,  1.51s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.07it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.02s/it]
 cuda available: True
-device: NVIDIA L40S
+device: NVIDIA H100 80GB HBM3
 model device: cuda:0
 [BayesLoRA] Wrapped 72 modules with VariationalLoRAWrapper (rank=32).
 [BayesLoRA] targets=qvo, last_k=12
 [Trainable BAYESLORA] 53,673,984/6,792,089,600 params (0.790%)
-[ARC-LM] Train ex: 1119 | Valid ex: 299 | Block size: 512
+Generating train split:   0%|          | 0/84437 [00:00<?, ? examples/s]Generating train split:  52%|█████▏    | 44000/84437 [00:00<00:00, 426895.25 examples/s]Generating train split: 100%|██████████| 84437/84437 [00:00<00:00, 482382.92 examples/s]
+Generating validation split:   0%|          | 0/4401 [00:00<?, ? examples/s]Generating validation split: 100%|██████████| 4401/4401 [00:00<00:00, 300446.49 examples/s]
+[OASST1] Train ex: 52912 | Valid ex: 2756 | Block size: 1024
 [BayesLoRA] Trainable params: 53,673,984
-[Train] batches/epoch=139 | grad_accum=8 | ~steps/epoch=18 | max_steps=2000 | diag_every=500
-step 100/2000 | loss 0.6953 | ce 5.5625 | kl 0.000000 | β 0.00 | 528.94s since last
-step 200/2000 | loss 0.5039 | ce 4.0312 | kl 0.000000 | β 0.00 | 529.60s since last
-step 300/2000 | loss 0.3965 | ce 3.1719 | kl 0.000000 | β 0.00 | 534.45s since last
-step 400/2000 | loss 0.2812 | ce 2.2500 | kl 0.000000 | β 0.00 | 535.49s since last
-step 500/2000 | loss 0.2266 | ce 1.8125 | kl 0.000000 | β 0.00 | 533.35s since last
-[Diag] step 500/2000 | ppl(det) 12.73 | ppl(det,8) 12.73 | tok-acc(det) 1.0% | ECE(det) 0.503 | ECE(det) 0.021
-[Diag-ARC] step 500 | MC acc(det) 17.2% | MC acc(det) 17.2% | n=64
-step 600/2000 | loss 0.2041 | ce 1.6328 | kl 0.000000 | β 0.00 | 746.86s since last
-step 700/2000 | loss 0.1865 | ce 1.4922 | kl 0.000000 | β 0.00 | 531.56s since last
-step 800/2000 | loss 0.1748 | ce 1.3984 | kl 0.000000 | β 0.00 | 533.73s since last
-step 900/2000 | loss 0.1504 | ce 1.2031 | kl 0.000044 | β 0.03 | 529.76s since last
-step 1000/2000 | loss 0.1484 | ce 1.1875 | kl 0.000091 | β 0.07 | 529.47s since last
-[Diag] step 1000/2000 | ppl(det) 6.34 | ppl(det,8) 6.34 | tok-acc(det) 1.1% | ECE(det) 0.596 | ECE(det) 0.016
-[Diag-ARC] step 1000 | MC acc(det) 17.2% | MC acc(det) 17.2% | n=64
-step 1100/2000 | loss 0.0737 | ce 0.5898 | kl 0.000140 | β 0.10 | 745.80s since last
-step 1200/2000 | loss 0.0669 | ce 0.5352 | kl 0.000191 | β 0.13 | 532.95s since last
+[Train] batches/epoch=13228 | grad_accum=16 | ~steps/epoch=827 | max_steps=2000 | diag_every=500
+step 100/2000 | loss 0.4727 | ce 7.5625 | kl 0.000000 | β 0.00 | 478.73s since last
+step 200/2000 | loss 0.4004 | ce 6.4062 | kl 0.000000 | β 0.00 | 477.79s since last
+step 300/2000 | loss 0.3672 | ce 5.8750 | kl 0.000000 | β 0.00 | 477.71s since last
+step 400/2000 | loss 0.2695 | ce 4.3125 | kl 0.000000 | β 0.00 | 477.52s since last
+step 500/2000 | loss 0.2139 | ce 3.4219 | kl 0.000000 | β 0.00 | 477.40s since last
+[Diag] step 500/2000 | ppl(det) 56.64 | ppl(MC,8) 56.64 | tok-acc(det) 9.6% | ECE(det) 0.309 | ECE(MC) 0.058
+[Diag-ARC] step 500 | MC acc(det) 18.8% | MC acc(MC) 18.8% | n=64
+step 600/2000 | loss 0.2051 | ce 3.2812 | kl 0.000000 | β 0.00 | 705.76s since last
+step 700/2000 | loss 0.1846 | ce 2.9531 | kl 0.000000 | β 0.00 | 475.36s since last
+step 800/2000 | loss 0.1992 | ce 3.1875 | kl 0.000000 | β 0.00 | 475.50s since last
+step 900/2000 | loss 0.2051 | ce 3.2812 | kl 0.000000 | β 0.00 | 476.18s since last
+step 1000/2000 | loss 0.1602 | ce 2.5625 | kl 0.000000 | β 0.00 | 476.19s since last
+[Diag] step 1000/2000 | ppl(det) 22.64 | ppl(MC,8) 22.64 | tok-acc(det) 12.0% | ECE(det) 0.390 | ECE(MC) 0.069
+[Diag-ARC] step 1000 | MC acc(det) 25.0% | MC acc(MC) 18.8% | n=64
+step 1100/2000 | loss 0.3379 | ce 5.4062 | kl 0.000047 | β 0.03 | 961.96s since last
+step 1200/2000 | loss 0.3184 | ce 5.0938 | kl 0.000099 | β 0.07 | 731.32s since last
+step 1300/2000 | loss 0.3262 | ce 5.2188 | kl 0.000154 | β 0.10 | 730.72s since last
+step 1400/2000 | loss 0.2422 | ce 3.8750 | kl 0.000212 | β 0.13 | 731.44s since last
+step 1500/2000 | loss 0.2383 | ce 3.8125 | kl 0.000273 | β 0.17 | 731.78s since last
+[Diag] step 1500/2000 | ppl(det) 26.09 | ppl(MC,8) 26.09 | tok-acc(det) 11.0% | ECE(det) 0.403 | ECE(MC) 0.336
+[Diag-ARC] step 1500 | MC acc(det) 21.9% | MC acc(MC) 25.0% | n=64
+step 1600/2000 | loss 0.2676 | ce 4.2812 | kl 0.000335 | β 0.20 | 960.69s since last
+step 1700/2000 | loss 0.1895 | ce 3.0312 | kl 0.000396 | β 0.23 | 731.15s since last
+step 1800/2000 | loss 0.2022 | ce 3.2344 | kl 0.000458 | β 0.27 | 731.80s since last
+step 1900/2000 | loss 0.2295 | ce 3.6719 | kl 0.000518 | β 0.30 | 731.69s since last
 Traceback (most recent call last):
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 1276, in <module>
-    main()
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 1233, in main
-    model = train_one(cfg, model, tokenizer, train_dl, valid_dl)
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 884, in train_one
-    out = model(input_ids=x)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/utils/generic.py", line 940, in wrapper
-    output = func(self, *args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 459, in forward
-    outputs: BaseModelOutputWithPast = self.model(
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/utils/generic.py", line 1064, in wrapper
-    outputs = func(self, *args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 395, in forward
-    hidden_states = decoder_layer(
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/modeling_layers.py", line 94, in __call__
-    return super().__call__(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
-    return func(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 294, in forward
-    hidden_states, _ = self.self_attn(
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/utils/deprecation.py", line 172, in wrapped_func
-    return func(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 264, in forward
-    attn_output = self.o_proj(attn_output)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora/hf.py", line 196, in forward
-    delta = (m_y + eps * torch.sqrt(v_y + 1e-8)).to(dtype=dtype)
-torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 64.00 MiB. GPU 0 has a total capacity of 44.53 GiB of which 25.25 MiB is free. Process 34027 has 44.50 GiB memory in use. Of the allocated memory 41.87 GiB is allocated by PyTorch, and 2.12 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 1175, in <module>
+  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 987, in main
+    )
+      
+  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 767, in train_one
+    print(f"step {global_step}/{total_steps} | loss {float(loss.item()):.4f} | "
+^^^^^^^^^^^
+  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.12/site-packages/torch/_tensor.py", line 647, in backward
+    torch.autograd.backward(
+  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.12/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.12/site-packages/torch/autograd/graph.py", line 829, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
