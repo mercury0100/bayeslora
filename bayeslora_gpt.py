@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
-# bayeslora_gpt.py
+# bayeslora_gpt_simple.py
 # WikiText-2 language modeling with LoRA vs BayesLoRA adapters on GPT-2/nanoGPT-ish HF models.
 # - Frozen base
-# - BayesLoRA: KL warmup, optional prune-as-you-go, MC eval (perplexity + token ECE/accuracy)
+# - BayesLoRA: KL on from step 0 with β=1, sampling on from step 0, prune-as-you-go
 # - Tokenize -> concatenate -> fixed-length blocks (nanoGPT style)
 
 '''
 python bayeslora_gpt.py \
   --method bayeslora \
-  --kl-freeze-steps 200 \
-  --beta-warmup-steps 200 \
-  --kl-scale 1e-5 \
-  --sample-warmup-steps 0 \
+  --include-mlp \
+  --kl-scale 1e-6 \
   --rank 32 --lora-alpha 32 \
-  --prune-every 200 --logalpha-thresh 4.0 --min-ranks 2 \
-  --diag-every 100
+  --prune-every 200 --logalpha-thresh 2.0 \
+  --diag-every 100 --last-k-layers 12
 '''
 
 import argparse
 import math
 import random
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -36,7 +34,7 @@ from transformers import (
 
 # ===== BayesLoRA glue (expects bayeslora/hf.py in PYTHONPATH) =====
 from bayeslora.hf import (
-    apply_bayeslora_to_llama,
+    apply_bayeslora,
     set_bayeslora_sampling,
     bayeslora_prune, get_adapter_ranks, count_adapter_params,
     LoRAWrapper, _iter_named_linears, _matches_any, _get_parent_and_attr, _module_in_out,
@@ -48,7 +46,7 @@ from bayeslora.hf import (
 class Config:
     # Model / dataset
     model_id: str = "gpt2"
-    dataset: str = "wikitext2"  # "wikitext2" (wikitext-2-raw-v1)
+    dataset: str = "wikitext2"  # "wikitext-2-raw-v1"
     block_size: int = 256
 
     # Method
@@ -58,16 +56,13 @@ class Config:
     rank: int = 16
     last_k_layers: int = 6
     target_projections: str = "qvo"  # gpt2: c_attn (QKV fused) ~ {q,v}, c_proj ~ o
+    include_mlp: bool = True          # include mlp.c_fc and mlp.c_proj
     lora_alpha: int = 16
     kl_scale: float = 2e-4
-    kl_freeze_steps: int = 500
-    beta_warmup_steps: int = 1500
     logalpha_thresh: float = 3.0
     prune_every: int = 0
     min_ranks: int = 1
-    prune_start_step: Optional[int] = None
-    beta_prune_threshold: float = 0.0
-    sample_warmup_steps: int = 0
+    prune_start_step: Optional[int] = 0  # start pruning from step 0 by default
 
     # Train
     lr: float = 2e-4
@@ -81,7 +76,7 @@ class Config:
     mc_eval: int = 5
     max_eval_tokens: Optional[int] = 200_000  # cap eval tokens for speed
     diag_every: int = 500
-    diag_token_cap: int = 50_000  # tokens to use when computing token-acc/ECE during diagnostics
+    diag_token_cap: int = 50_000  # tokens used for token-acc/ECE during diagnostics
 
     # System
     seed: int = 42
@@ -166,11 +161,16 @@ def _build_target_modules_gpt2(model, cfg: Config):
 
     names = []
     for i in range(start, n_layers):
-        stem = f"transformer.h.{i}.attn"
+        attn = f"transformer.h.{i}.attn"
         if (want_q or want_v):
-            names.append(f"{stem}.c_attn")
+            names.append(f"{attn}.c_attn")   # fused QKV on GPT-2
         if want_o:
-            names.append(f"{stem}.c_proj")
+            names.append(f"{attn}.c_proj")   # attention out
+
+        if cfg.include_mlp:
+            mlp = f"transformer.h.{i}.mlp"
+            names.append(f"{mlp}.c_fc")      # MLP expand
+            names.append(f"{mlp}.c_proj")    # MLP project
     return names
 
 
@@ -184,7 +184,7 @@ def add_lora(model, cfg: Config):
         parent, attr = _get_parent_and_attr(model, name)
         setattr(parent, attr, LoRAWrapper(lin, d_in, d_out, r=cfg.rank, lora_alpha=cfg.lora_alpha))
         replaced += 1
-    print(f"[LoRA] Wrapped {replaced} GPT-2 modules (rank={cfg.rank}, targets={cfg.target_projections}, last_k={cfg.last_k_layers}).")
+    print(f"[LoRA] Wrapped {replaced} GPT-2 modules (rank={cfg.rank}, targets={cfg.target_projections}, last_k={cfg.last_k_layers}, include_mlp={cfg.include_mlp}).")
 
     tparams = 0
     allparams = 0
@@ -200,13 +200,13 @@ def add_lora(model, cfg: Config):
 
 def add_bayeslora(model, cfg: Config):
     target_modules = _build_target_modules_gpt2(model, cfg)
-    model = apply_bayeslora_to_llama(
+    model = apply_bayeslora(
         model,
         target_modules=target_modules,
         rank=cfg.rank,
         lora_alpha=cfg.lora_alpha,
         kl_scale=cfg.kl_scale,         # per-module scale stored in wrappers
-        tie_alpha_per_rank=False,
+        tie_alpha_per_rank=True,
         local_reparam=True,
         freeze_base=True,
         exclude=["lm_head"],
@@ -219,7 +219,7 @@ def add_bayeslora(model, cfg: Config):
         p.requires_grad = req
         if req: tparams += p.numel()
     pct = 100.0 * tparams / max(1, allparams)
-    print(f"[BayesLoRA] targets={cfg.target_projections}, last_k={cfg.last_k_layers}")
+    print(f"[BayesLoRA] targets={cfg.target_projections}, last_k={cfg.last_k_layers}, include_mlp={cfg.include_mlp}")
     print(f"[Trainable BAYESLORA] {tparams:,}/{allparams:,} params ({pct:.3f}%)")
     return model
 
@@ -233,7 +233,7 @@ def load_model_and_tokenizer(cfg: Config):
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, use_fast=False)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.model_max_length = 10**9   # <— prevent length warning during raw concat tokenization
+    tokenizer.model_max_length = 10**9   # prevent length warning during raw concat tokenization
 
     dtype = get_dtype(cfg.dtype)
 
@@ -241,7 +241,7 @@ def load_model_and_tokenizer(cfg: Config):
         model = AutoModelForCausalLM.from_pretrained(
             cfg.model_id,
             device_map="auto",
-            torch_dtype=dtype,
+            dtype=dtype,
         )
         model.config.use_cache = False
     else:
@@ -387,8 +387,9 @@ def _rebuild_opt_and_sched(model, cfg: Config, total_steps: int, current_step: i
         pass
     return opt, sched
 
+
 def train_one(cfg: Config, model, train_dl: DataLoader, valid_dl: DataLoader):
-    import math, time
+    import time
     device = next(model.parameters()).device
     model.train()
 
@@ -416,9 +417,8 @@ def train_one(cfg: Config, model, train_dl: DataLoader, valid_dl: DataLoader):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
-            # train-time sampling (optional warmup)
-            do_sample = (cfg.method == "bayeslora") and (global_step >= cfg.sample_warmup_steps)
-            set_bayeslora_sampling(model, do_sample)
+            # Always sample for BayesLoRA during training (no warmup)
+            set_bayeslora_sampling(model, (cfg.method == "bayeslora"))
 
             out = model(input_ids=x)
             logits = out.logits  # [B, T, V]
@@ -428,16 +428,11 @@ def train_one(cfg: Config, model, train_dl: DataLoader, valid_dl: DataLoader):
                 reduction="mean"
             )
 
-            # KL term (pass beta only; wrappers hold per-module _kl_scale)
+            # KL term with β=1.0 from the very first step (no freeze/warmup)
             kl_term = torch.tensor(0.0, device=device, dtype=torch.float32)
             if cfg.method == "bayeslora":
-                beta = 0.0
-                if global_step > cfg.kl_freeze_steps:
-                    beta = min(1.0, (global_step - cfg.kl_freeze_steps) / max(1, cfg.beta_warmup_steps))
                 denom = max(1, x.size(0))  # normalize per batch
-                kl_term = bayeslora_step(model, beta=beta) / float(denom)
-            else:
-                beta = 0.0
+                kl_term = bayeslora_step(model, beta=1.0) / float(denom)
 
             loss = (loss_ce / cfg.grad_accum) + (kl_term / cfg.grad_accum)
             loss.backward()
@@ -449,15 +444,15 @@ def train_one(cfg: Config, model, train_dl: DataLoader, valid_dl: DataLoader):
                 accum = 0
                 global_step += 1
 
-                # Frequent lightweight heartbeat
+                # Lightweight heartbeat
                 if global_step % LOG_EVERY == 0:
                     dt = time.time() - last_t
                     last_t = time.time()
                     print(f"step {global_step}/{total_steps} | loss {float(loss.item()):.4f} | "
-                          f"ce {float(loss_ce.item()):.4f} | kl {float(kl_term.item()):.6f} | β {beta:.2f} | "
+                          f"ce {float(loss_ce.item()):.4f} | kl {float(kl_term.item()):.6f} | "
                           f"{dt:.2f}s since last")
 
-                # Full diagnostics (ppl + token acc/ECE)
+                # Diagnostics (ppl + token acc/ECE)
                 if global_step % cfg.diag_every == 0:
                     ppl_det, ppl_mc = evaluate_perplexity(
                         cfg, model, valid_dl,
@@ -475,10 +470,9 @@ def train_one(cfg: Config, model, train_dl: DataLoader, valid_dl: DataLoader):
                         f"ECE(MC,{cfg.mc_eval}) {ece_mc:.3f}"
                     )
 
-                # prune-as-you-go (optional)
+                # prune-as-you-go (start at prune_start_step; no β gating)
                 if (cfg.method == "bayeslora" and cfg.prune_every > 0 and
-                    global_step >= (cfg.prune_start_step if cfg.prune_start_step is not None else (cfg.kl_freeze_steps + cfg.beta_warmup_steps)) and
-                    beta >= cfg.beta_prune_threshold and
+                    global_step >= (cfg.prune_start_step or 0) and
                     global_step % cfg.prune_every == 0):
                     before = count_adapter_params(model)
                     changed = bayeslora_prune(model, logalpha_thresh=cfg.logalpha_thresh, min_ranks=cfg.min_ranks)
@@ -490,6 +484,7 @@ def train_one(cfg: Config, model, train_dl: DataLoader, valid_dl: DataLoader):
 
     set_bayeslora_sampling(model, False)
     return model
+
 
 # ===================== main =====================
 def parse_args() -> Config:
@@ -503,16 +498,13 @@ def parse_args() -> Config:
     p.add_argument("--rank", type=int, default=16)
     p.add_argument("--target-projections", type=str, default="qvo")
     p.add_argument("--last-k-layers", type=int, default=6)
+    p.add_argument("--include-mlp", action="store_true")  # enable MLP adapters
     p.add_argument("--lora-alpha", type=int, default=16)
     p.add_argument("--kl-scale", type=float, default=2e-4)
-    p.add_argument("--kl-freeze-steps", type=int, default=500)
-    p.add_argument("--beta-warmup-steps", type=int, default=1500)
     p.add_argument("--logalpha-thresh", type=float, default=3.0)
     p.add_argument("--prune-every", type=int, default=0)
-    p.add_argument("--min-ranks", type=int, default=1)
-    p.add_argument("--prune-start-step", type=int, default=None)
-    p.add_argument("--beta-prune-threshold", type=float, default=0.0)
-    p.add_argument("--sample-warmup-steps", type=int, default=0)
+    p.add_argument("--min-ranks", type=int, default=0)
+    p.add_argument("--prune-start-step", type=int, default=0)
 
     # train
     p.add_argument("--lr", type=float, default=2e-4)
@@ -539,11 +531,11 @@ def parse_args() -> Config:
         dataset=args.dataset,
         method=args.method,
         rank=args.rank, target_projections=args.target_projections, last_k_layers=args.last_k_layers,
+        include_mlp=bool(args.include_mlp),
         lora_alpha=args.lora_alpha,
-        kl_scale=args.kl_scale, kl_freeze_steps=args.kl_freeze_steps, beta_warmup_steps=args.beta_warmup_steps,
+        kl_scale=args.kl_scale,
         logalpha_thresh=args.logalpha_thresh, prune_every=args.prune_every, min_ranks=args.min_ranks,
-        prune_start_step=args.prune_start_step, beta_prune_threshold=args.beta_prune_threshold,
-        sample_warmup_steps=args.sample_warmup_steps,
+        prune_start_step=args.prune_start_step,
         lr=args.lr, weight_decay=args.weight_decay,
         max_steps=args.max_steps, warmup_steps=args.warmup_steps,
         batch_size=args.batch_size, grad_accum=args.grad_accum,

@@ -253,7 +253,7 @@ class VariationalLoRAWrapper(nn.Module):
 # Public API
 # -----------------------------------------------------------------------------
 
-def apply_bayeslora_to_llama(
+def apply_bayeslora(
     model: nn.Module,
     target_modules: List[str],
     rank: int,

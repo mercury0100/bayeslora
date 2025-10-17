@@ -6,3 +6,4 @@ datasets>=2.20
 laplace-torch
 bitsandbytes
 sentencepiece
+flash_attn

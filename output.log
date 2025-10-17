@@ -1,53 +1,0 @@
-Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:01<00:01,  1.51s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.07it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:02<00:00,  1.02s/it]
-cuda available: True
-device: NVIDIA H100 80GB HBM3
-model device: cuda:0
-[BayesLoRA] Wrapped 72 modules with VariationalLoRAWrapper (rank=32).
-[BayesLoRA] targets=qvo, last_k=12
-[Trainable BAYESLORA] 53,673,984/6,792,089,600 params (0.790%)
-Generating train split:   0%|          | 0/84437 [00:00<?, ? examples/s]Generating train split:  52%|█████▏    | 44000/84437 [00:00<00:00, 426895.25 examples/s]Generating train split: 100%|██████████| 84437/84437 [00:00<00:00, 482382.92 examples/s]
-Generating validation split:   0%|          | 0/4401 [00:00<?, ? examples/s]Generating validation split: 100%|██████████| 4401/4401 [00:00<00:00, 300446.49 examples/s]
-[OASST1] Train ex: 52912 | Valid ex: 2756 | Block size: 1024
-[BayesLoRA] Trainable params: 53,673,984
-[Train] batches/epoch=13228 | grad_accum=16 | ~steps/epoch=827 | max_steps=2000 | diag_every=500
-step 100/2000 | loss 0.4727 | ce 7.5625 | kl 0.000000 | β 0.00 | 478.73s since last
-step 200/2000 | loss 0.4004 | ce 6.4062 | kl 0.000000 | β 0.00 | 477.79s since last
-step 300/2000 | loss 0.3672 | ce 5.8750 | kl 0.000000 | β 0.00 | 477.71s since last
-step 400/2000 | loss 0.2695 | ce 4.3125 | kl 0.000000 | β 0.00 | 477.52s since last
-step 500/2000 | loss 0.2139 | ce 3.4219 | kl 0.000000 | β 0.00 | 477.40s since last
-[Diag] step 500/2000 | ppl(det) 56.64 | ppl(MC,8) 56.64 | tok-acc(det) 9.6% | ECE(det) 0.309 | ECE(MC) 0.058
-[Diag-ARC] step 500 | MC acc(det) 18.8% | MC acc(MC) 18.8% | n=64
-step 600/2000 | loss 0.2051 | ce 3.2812 | kl 0.000000 | β 0.00 | 705.76s since last
-step 700/2000 | loss 0.1846 | ce 2.9531 | kl 0.000000 | β 0.00 | 475.36s since last
-step 800/2000 | loss 0.1992 | ce 3.1875 | kl 0.000000 | β 0.00 | 475.50s since last
-step 900/2000 | loss 0.2051 | ce 3.2812 | kl 0.000000 | β 0.00 | 476.18s since last
-step 1000/2000 | loss 0.1602 | ce 2.5625 | kl 0.000000 | β 0.00 | 476.19s since last
-[Diag] step 1000/2000 | ppl(det) 22.64 | ppl(MC,8) 22.64 | tok-acc(det) 12.0% | ECE(det) 0.390 | ECE(MC) 0.069
-[Diag-ARC] step 1000 | MC acc(det) 25.0% | MC acc(MC) 18.8% | n=64
-step 1100/2000 | loss 0.3379 | ce 5.4062 | kl 0.000047 | β 0.03 | 961.96s since last
-step 1200/2000 | loss 0.3184 | ce 5.0938 | kl 0.000099 | β 0.07 | 731.32s since last
-step 1300/2000 | loss 0.3262 | ce 5.2188 | kl 0.000154 | β 0.10 | 730.72s since last
-step 1400/2000 | loss 0.2422 | ce 3.8750 | kl 0.000212 | β 0.13 | 731.44s since last
-step 1500/2000 | loss 0.2383 | ce 3.8125 | kl 0.000273 | β 0.17 | 731.78s since last
-[Diag] step 1500/2000 | ppl(det) 26.09 | ppl(MC,8) 26.09 | tok-acc(det) 11.0% | ECE(det) 0.403 | ECE(MC) 0.336
-[Diag-ARC] step 1500 | MC acc(det) 21.9% | MC acc(MC) 25.0% | n=64
-step 1600/2000 | loss 0.2676 | ce 4.2812 | kl 0.000335 | β 0.20 | 960.69s since last
-step 1700/2000 | loss 0.1895 | ce 3.0312 | kl 0.000396 | β 0.23 | 731.15s since last
-step 1800/2000 | loss 0.2022 | ce 3.2344 | kl 0.000458 | β 0.27 | 731.80s since last
-step 1900/2000 | loss 0.2295 | ce 3.6719 | kl 0.000518 | β 0.30 | 731.69s since last
-Traceback (most recent call last):
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 1175, in <module>
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 987, in main
-    )
-      
-  File "/teamspace/studios/this_studio/bayeslora/bayeslora.py", line 767, in train_one
-    print(f"step {global_step}/{total_steps} | loss {float(loss.item()):.4f} | "
-^^^^^^^^^^^
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.12/site-packages/torch/_tensor.py", line 647, in backward
-    torch.autograd.backward(
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.12/site-packages/torch/autograd/__init__.py", line 354, in backward
-    _engine_run_backward(
-  File "/home/zeus/miniconda3/envs/cloudspace/lib/python3.12/site-packages/torch/autograd/graph.py", line 829, in _engine_run_backward
-    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-KeyboardInterrupt
