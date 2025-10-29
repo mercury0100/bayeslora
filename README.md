@@ -3,20 +3,6 @@
 ## GPT-2
 
 ```
-python bayeslora_nanogpt.py \
-  --method bayeslora \
-  --kl-freeze-steps 200 \
-  --beta-warmup-steps 200 \
-  --kl-scale 1e-5 \
-  --sample-warmup-steps 0 \
-  --rank 32 --lora-alpha 32 \
-  --prune-every 200 --logalpha-thresh 4.0 --min-ranks 2 \
-  --diag-every 100
-```
-
-### Output
-
-```
 ⚡ master ~/bayeslora ppython bayeslora_gpt.py \
   --method bayeslora \
   --kl-freeze-steps 200 \
@@ -316,4 +302,11 @@ Method: lora
 Perplexity (det): 25.836 | Perplexity (MC, 5): 25.836
 Token-Acc (det): 40.34% | ECE(det): 0.0140
 Token-Acc (MC):  40.34% | ECE(MC,5): 0.0140
+```
+
+## Experiments
+
+```
+python experiment_1.py --out-dir runs/wt2_bayes
+python experiment_1.py --method lora --out-dir runs/wt2_lora_mcdo
 ```

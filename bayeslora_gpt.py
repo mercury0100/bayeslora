@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bayeslora_gpt_simple.py
+# bayeslora_gpt.py
 # WikiText-2 language modeling with LoRA vs BayesLoRA adapters on GPT-2/nanoGPT-ish HF models.
 # - Frozen base
 # - BayesLoRA: KL on from step 0 with β=1, sampling on from step 0, prune-as-you-go
