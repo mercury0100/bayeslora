@@ -6,6 +6,7 @@
 # - KL step sums per-module scaled KLs (no global max)
 # - Local reparameterization clamps variance before sqrt
 # - Keep adapter params & ARD math in FP32 to avoid NaNs; cast to activation dtype in forward
+# - Allow pruning all the way to rank=0 safely
 
 from __future__ import annotations
 from typing import Dict, Iterable, Optional, Tuple, List
@@ -23,6 +24,9 @@ def _kl_from_mu_logs2(mu: torch.Tensor, log_sigma2: torch.Tensor) -> torch.Tenso
     """Positive KL using Molchanov '17 closed-form approximation.
     All math in FP32 for stability.
     """
+    if mu.numel() == 0:
+        # Handle zero-rank gracefully
+        return torch.tensor(0.0, device=log_sigma2.device if log_sigma2.is_cuda else mu.device, dtype=torch.float32)
     mu32 = mu.float()
     log_sigma2_32 = log_sigma2.float()
     sigma2 = log_sigma2_32.exp()
@@ -100,6 +104,8 @@ class LoRAWrapper(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.base(x)
+        if self.r == 0:
+            return y
         A = self.A.to(dtype=x.dtype, device=x.device)
         B = self.B.to(dtype=x.dtype, device=x.device)
         delta = (x @ A.t()) @ B.t()
@@ -164,6 +170,8 @@ class VariationalLoRAWrapper(nn.Module):
     # ---- forward ----
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.base(x)
+        if self.r == 0:
+            return y  # no adapters active
         dtype, device = x.dtype, x.device
 
         A_mu32 = self.A_mu
@@ -176,6 +184,7 @@ class VariationalLoRAWrapper(nn.Module):
         if not self._sample:
             A_mu = A_mu32.to(dtype=dtype, device=device)
             B_mu = B_mu32.to(dtype=dtype, device=device)
+            # x:[..., d_in], A_mu:[r, d_in] -> (x @ A^T): [..., r]; then @ B^T -> [..., d_out]
             delta = (x @ A_mu.t()) @ B_mu.t()
             return y + self.scaling * delta
 
@@ -211,12 +220,17 @@ class VariationalLoRAWrapper(nn.Module):
     # ---- ARD bits ----
     def kl(self) -> torch.Tensor:
         # High-impact fix (3): clamp log-σ² inside KL for stability
+        if self.r == 0:
+            return torch.tensor(0.0, device=_device_like(self.base), dtype=torch.float32)
         A_log_s2 = torch.clamp(self._log_sigma2_A(), min=-20.0, max=2.0)
         B_log_s2 = torch.clamp(self._log_sigma2_B(), min=-20.0, max=2.0)
         return _kl_from_mu_logs2(self.A_mu, A_log_s2).sum() + _kl_from_mu_logs2(self.B_mu, B_log_s2).sum()
 
     @torch.no_grad()
     def rank_log_alpha(self) -> torch.Tensor:
+        # Handle zero-rank gracefully
+        if int(self.r) == 0:
+            return torch.empty(0, device=_device_like(self.base))
         A_log_s2 = self._log_sigma2_A().float()
         B_log_s2 = self._log_sigma2_B().float()
         A_log_mu2 = (self.A_mu.float().pow(2) + _EPS).log()
@@ -228,24 +242,39 @@ class VariationalLoRAWrapper(nn.Module):
     @torch.no_grad()
     def prune(self, log_alpha_thresh: float = 3.0, min_ranks: int = 1) -> bool:
         """Prune ranks and return True if r changed (optimizer must be rebuilt)."""
-        la = self.rank_log_alpha()
+        la = self.rank_log_alpha()  # shape: [r] or empty
         keep = torch.nonzero(la < log_alpha_thresh, as_tuple=False).flatten()
-        kmin = max(1, int(min_ranks))
+        # Allow full collapse to zero if min_ranks == 0
+        kmin = max(0, int(min_ranks))
         if keep.numel() < kmin:
-            order = torch.argsort(la)
+            order = torch.argsort(la)  # empty if la empty
             keep = order[:kmin]
         changed = keep.numel() != int(self.r)
         if not changed:
             return False
+
         # Replace parameters (optimizer must be recreated by caller)
-        self.A_mu = nn.Parameter(self.A_mu[keep])
-        self.B_mu = nn.Parameter(self.B_mu[:, keep])
-        if self.tie_alpha_per_rank:
-            self.rank_log_sigma2 = nn.Parameter(self.rank_log_sigma2[keep])
+        if keep.numel() == 0:
+            d_in = self.A_mu.shape[1]
+            d_out = self.B_mu.shape[0]
+            device = self.A_mu.device
+            self.A_mu = nn.Parameter(torch.empty(0, d_in, device=device, dtype=torch.float32))
+            self.B_mu = nn.Parameter(torch.empty(d_out, 0, device=device, dtype=torch.float32))
+            if self.tie_alpha_per_rank:
+                self.rank_log_sigma2 = nn.Parameter(torch.empty(0, device=device, dtype=torch.float32))
+            else:
+                self.A_log_sigma2 = nn.Parameter(torch.empty(0, d_in, device=device, dtype=torch.float32))
+                self.B_log_sigma2 = nn.Parameter(torch.empty(d_out, 0, device=device, dtype=torch.float32))
+            self.r = 0
         else:
-            self.A_log_sigma2 = nn.Parameter(self.A_log_sigma2[keep])
-            self.B_log_sigma2 = nn.Parameter(self.B_log_sigma2[:, keep])
-        self.r = keep.numel()
+            self.A_mu = nn.Parameter(self.A_mu[keep])
+            self.B_mu = nn.Parameter(self.B_mu[:, keep])
+            if self.tie_alpha_per_rank:
+                self.rank_log_sigma2 = nn.Parameter(self.rank_log_sigma2[keep])
+            else:
+                self.A_log_sigma2 = nn.Parameter(self.A_log_sigma2[keep])
+                self.B_log_sigma2 = nn.Parameter(self.B_log_sigma2[:, keep])
+            self.r = keep.numel()
         return True
 
 
@@ -258,7 +287,7 @@ def apply_bayeslora(
     target_modules: List[str],
     rank: int,
     lora_alpha: float,
-    kl_scale: float = 0.05,
+    kl_scale: float = 1e-6,
     tie_alpha_per_rank: bool = True,
     local_reparam: bool = False,
     freeze_base: bool = True,
@@ -333,7 +362,7 @@ def bayeslora_step(model: nn.Module, beta: float) -> torch.Tensor:
 
 
 @torch.no_grad()
-def bayeslora_prune(model: nn.Module, logalpha_thresh: float = 3.0, min_ranks: int = 1) -> bool:
+def bayeslora_prune(model: nn.Module, logalpha_thresh: float = 3.0, min_ranks: int = 0) -> bool:
     """Prune all adapter modules. Returns True if any module changed its rank.
     IMPORTANT: If True, you must rebuild the optimizer to sync parameter groups.
     """

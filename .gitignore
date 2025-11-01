@@ -1,5 +1,3 @@
-best_model.pt
 __pycache__/
 *.pyc
-data/
-runs/
+outputs/
