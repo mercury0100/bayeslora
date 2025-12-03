@@ -61,7 +61,7 @@ class Config:
     kl_scale: float = 2e-4
     logalpha_thresh: float = 3.0
     prune_every: int = 0
-    min_ranks: int = 1
+    min_ranks: int = 0
     prune_start_step: Optional[int] = 0  # start pruning from step 0 by default
 
     # Train
