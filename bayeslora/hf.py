@@ -234,6 +234,170 @@ class VariationalLoRAWrapper(nn.Module):
         self.r = keep.numel()
         return True
 
+class AsymVariationalLoRAWrapper(nn.Module):
+    def __init__(
+        self,
+        base: nn.Module,
+        d_in: int,
+        d_out: int,
+        r: int,
+        lora_alpha: float = 1.0,
+        tie_alpha_per_rank: bool = True,
+        init_log_sigma2: float = -8.0,
+        local_reparam: bool = False,
+    ):
+        super().__init__()
+        self.base = base
+        self.r = int(r)
+        self.scaling = float(lora_alpha) / max(1, int(r))
+        self.tie_alpha_per_rank = bool(tie_alpha_per_rank)
+        self.local_reparam = bool(local_reparam)
+        self._sample = False
+
+        dev = _device_like(base)
+        # Means
+        self.A_mu = nn.Parameter(torch.zeros(r, d_in, device=dev, dtype=torch.float32))
+        self.B_mu = nn.Parameter(torch.zeros(d_out, r, device=dev, dtype=torch.float32))
+        if r > 0:
+            nn.init.kaiming_uniform_(self.A_mu, a=5 ** 0.5)
+            nn.init.uniform_(self.B_mu, a=-1e-3, b=1e-3)
+
+        # --- Asymmetric Bayes: variance only for A ---
+        if tie_alpha_per_rank:
+            # One log-variance per rank, broadcast over A's row
+            self.rank_log_sigma2 = nn.Parameter(
+                torch.full((r,), init_log_sigma2, device=dev, dtype=torch.float32)
+            )
+        else:
+            self.A_log_sigma2 = nn.Parameter(
+                torch.full((r, d_in), init_log_sigma2, device=dev, dtype=torch.float32)
+            )
+
+        self._kl_scale = 0.05
+
+    def set_sample(self, flag: bool):
+        self._sample = bool(flag)
+
+    def _log_sigma2_A(self):
+        if self.tie_alpha_per_rank:
+            return self.rank_log_sigma2.view(self.r, 1).expand_as(self.A_mu)
+        return self.A_log_sigma2
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.base(x)
+        dtype, device = x.dtype, x.device
+        A_mu32 = self.A_mu
+        B_mu32 = self.B_mu
+
+        # Clamp A variances
+        A_log_s2_32 = torch.clamp(self._log_sigma2_A(), min=-20.0, max=2.0)
+
+        if not self._sample:
+            # Deterministic mean prediction
+            A_mu = A_mu32.to(dtype=dtype, device=device)
+            B_mu = B_mu32.to(dtype=dtype, device=device)
+            delta = (x @ A_mu.t()) @ B_mu.t()
+            return y + self.scaling * delta
+
+        # --- Sampling path ---
+        if self.local_reparam:
+            # Local reparameterisation with stochastic A and deterministic B
+            x_f = x.to(torch.float32)
+            x2 = x_f.pow(2)
+            A_var = A_log_s2_32.exp()              # [r, d_in]
+
+            # Rank activations
+            m_s = x_f @ A_mu32.t()                 # [B, r]
+            v_s = x2 @ A_var.t()                   # [B, r]
+
+            # Project through deterministic B
+            m_y = m_s @ B_mu32.t()                 # [B, d_out]
+            v_y = v_s @ (B_mu32.pow(2)).t()        # [B, d_out]
+            v_y = torch.clamp(v_y, min=0.0)
+
+            eps = torch.randn_like(m_y, dtype=torch.float32, device=device)
+            delta = (m_y + eps * torch.sqrt(v_y + 1e-8)).to(dtype=dtype)
+        else:
+            # Direct weight sampling: A stochastic, B deterministic
+            scaleA = torch.exp(0.5 * A_log_s2_32)
+            epsA = torch.randn_like(A_mu32, dtype=torch.float32, device=device)
+            A32 = A_mu32 + scaleA * epsA
+            A = A32.to(dtype=dtype, device=device)
+            B = B_mu32.to(dtype=dtype, device=device)
+            delta = (x @ A.t()) @ B.t()
+
+        return y + self.scaling * delta
+
+    @torch.no_grad()
+    def fix_gauge(self, eps: float = 1e-12) -> None:
+        if int(self.r) == 0:
+            return
+        A = self.A_mu
+        B = self.B_mu
+        nA = torch.linalg.vector_norm(A, ord=2, dim=1)
+        nB = torch.linalg.vector_norm(B, ord=2, dim=0)
+        c = torch.sqrt((nB + eps) / (nA + eps))
+        A.mul_(c.unsqueeze(1))
+        B.mul_(1.0 / c.unsqueeze(0))
+        if not self.tie_alpha_per_rank:
+            # Only A has variances now
+            logc = torch.log(c + eps)
+            self.A_log_sigma2.add_(2.0 * logc.unsqueeze(1))
+
+    def kl(self) -> torch.Tensor:
+        """KL(q(A) || p(A)) with Molchanov prior, B deterministic."""
+        if int(self.r) == 0:
+            return torch.tensor(0.0, device=self.A_mu.device, dtype=torch.float32)
+        A_log_s2 = torch.clamp(self._log_sigma2_A(), min=-20.0, max=2.0)
+        return _kl_from_mu_logs2(self.A_mu, A_log_s2).sum()
+
+    @torch.no_grad()
+    def rank_log_alpha(self) -> torch.Tensor:
+        """Rank-wise log alpha from A only."""
+        if int(self.r) == 0:
+            return torch.empty(0, device=self.A_mu.device, dtype=torch.float32)
+        A_log_s2 = self._log_sigma2_A().float()
+        A_log_mu2 = (self.A_mu.float().pow(2) + _EPS).log()
+        # Median over input dims → per-rank log alpha
+        A_med = (A_log_s2 - A_log_mu2).median(dim=1).values
+        return A_med
+
+    @torch.no_grad()
+    def prune(self, log_alpha_thresh: float = 3.0, min_ranks: int = 0) -> bool:
+        la = self.rank_log_alpha()
+        keep = torch.nonzero(la < log_alpha_thresh, as_tuple=False).flatten()
+        kmin = max(0, int(min_ranks))
+        if keep.numel() < kmin:
+            order = torch.argsort(la)
+            keep = order[:kmin]
+
+        changed = keep.numel() != int(self.r)
+        if not changed:
+            return False
+
+        # Replace parameters (optimizer must be recreated by caller)
+        dev = self.A_mu.device
+        dt = self.A_mu.dtype
+        din = self.A_mu.shape[1]
+        dout = self.B_mu.shape[0]
+
+        if keep.numel() == 0:
+            self.A_mu = nn.Parameter(torch.zeros(0, din, device=dev, dtype=dt))
+            self.B_mu = nn.Parameter(torch.zeros(dout, 0, device=dev, dtype=dt))
+            if self.tie_alpha_per_rank:
+                self.rank_log_sigma2 = nn.Parameter(torch.zeros(0, device=dev, dtype=dt))
+            else:
+                self.A_log_sigma2 = nn.Parameter(torch.zeros(0, din, device=dev, dtype=dt))
+        else:
+            self.A_mu = nn.Parameter(self.A_mu[keep])
+            self.B_mu = nn.Parameter(self.B_mu[:, keep])
+            if self.tie_alpha_per_rank:
+                self.rank_log_sigma2 = nn.Parameter(self.rank_log_sigma2[keep])
+            else:
+                self.A_log_sigma2 = nn.Parameter(self.A_log_sigma2[keep])
+        self.r = keep.numel()
+        return True
+
 
 # -----------------------------------------------------------------------------
 # Public API
