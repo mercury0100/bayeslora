@@ -148,7 +148,7 @@ class VariationalLoRAWrapper(nn.Module):
             v_s = x2 @ A_var.t()
             B_var = B_log_s2_32.exp()
             m_y = m_s @ B_mu32.t()
-            v_y = (v_s @ (B_mu32.pow(2)).t()) + ((m_s.pow(2)) @ B_var.t())
+            v_y = (v_s @ (B_mu32.pow(2)).t()) + ((m_s.pow(2)) @ B_var.t()) + (v_s @ B_var.t())
             v_y = torch.clamp(v_y, min=0.0)
             eps = torch.randn_like(m_y, dtype=torch.float32, device=device)
             delta = (m_y + eps * torch.sqrt(v_y + 1e-8)).to(dtype=dtype)
